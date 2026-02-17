@@ -80,3 +80,92 @@ def upload_token_view(request):
 `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.svg`, `.bmp`
 
 Max file size: **10 MB**
+
+---
+
+## Usage Examples
+
+### Upload an image
+
+```bash
+curl -X POST "http://localhost:8000/upload?token=YOUR_TOKEN_HERE" \
+  -F "file=@/path/to/your/image.png"
+```
+
+**Response:**
+
+```json
+{
+  "url": "http://localhost:8000/media/a1b2c3d4.png",
+  "filename": "a1b2c3d4.png"
+}
+```
+
+### Get an image
+
+```
+GET http://localhost:8000/media/{filename}
+```
+
+Returns the image file directly — use the URL in `<img>` tags.
+
+### List all images
+
+```
+GET http://localhost:8000/media
+```
+
+### Delete an image
+
+```bash
+curl -X DELETE "http://localhost:8000/media/{filename}?token=YOUR_TOKEN_HERE"
+```
+
+### Health check
+
+```
+GET http://localhost:8000/
+```
+
+---
+
+## Exposing to the Internet
+
+To make this accessible from your deployed frontend/backend, you can:
+
+- **Cloudflare Tunnel**: `cloudflared tunnel --url http://localhost:8000`
+- **ngrok**: `ngrok http 8000`
+- **Reverse proxy (Nginx/Caddy)**: point a domain to this server
+
+---
+
+## Frontend Usage Example (JavaScript)
+
+```javascript
+// 1. Get an upload token from your Django backend
+const tokenRes = await fetch("http://your-backend/api/upload-token/", {
+  headers: { Authorization: "Bearer YOUR_USER_JWT" },
+});
+const { token } = await tokenRes.json();
+
+// 2. Upload the image to the media server
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+
+const res = await fetch(`http://your-media-server:8000/upload?token=${token}`, {
+  method: "POST",
+  body: formData,
+});
+
+const { url } = await res.json();
+
+// 3. Send the URL to your Django backend to store in the database
+await fetch("http://your-backend/api/menu-item", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: "Bearer YOUR_USER_JWT",
+  },
+  body: JSON.stringify({ name: "Burger", imageUrl: url }),
+});
+```
