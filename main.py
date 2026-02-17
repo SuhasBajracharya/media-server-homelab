@@ -1,24 +1,85 @@
 import os
 import uuid
+import hmac
+import hashlib
+import time
 import shutil
 from pathlib import Path
+from dotenv import load_dotenv
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+load_dotenv()
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Query
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-# Where images are saved on disk
 MEDIA_DIR = Path("media")
 MEDIA_DIR.mkdir(exist_ok=True)
 
-# Allowed image extensions
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"}
-
-# Max file size in bytes (10 MB)
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# Auth – HMAC signed tokens (shared secret between Django & media server)
+# ---------------------------------------------------------------------------
+# Set the same secret in your Django backend to generate upload tokens.
+SHARED_SECRET = os.environ.get("MEDIA_SERVER_SECRET", "")
+if not SHARED_SECRET:
+    raise RuntimeError(
+        "MEDIA_SERVER_SECRET env variable is required. "
+        "Set the same value in your Django backend to sign upload tokens."
+    )
+
+TOKEN_EXPIRY_SECONDS = int(os.environ.get("TOKEN_EXPIRY_SECONDS", "900"))  # 15 min
+
+
+def verify_upload_token(token: str):
+    """
+    Verify an HMAC-signed upload token.
+
+    Token format:  <timestamp>.<hex-signature>
+
+    Your Django backend generates it like this:
+
+        import hmac, hashlib, time
+        SHARED_SECRET = "same-secret-as-media-server"
+
+        def generate_upload_token():
+            ts = str(int(time.time()))
+            sig = hmac.new(
+                SHARED_SECRET.encode(), ts.encode(), hashlib.sha256
+            ).hexdigest()
+            return f"{ts}.{sig}"
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="Upload token is required.")
+
+    parts = token.split(".")
+    if len(parts) != 2:
+        raise HTTPException(status_code=401, detail="Malformed token.")
+
+    timestamp_str, signature = parts
+
+    # 1. Check expiry
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Malformed token.")
+
+    if time.time() - timestamp > TOKEN_EXPIRY_SECONDS:
+        raise HTTPException(status_code=401, detail="Token has expired.")
+
+    # 2. Verify HMAC signature
+    expected_sig = hmac.new(
+        SHARED_SECRET.encode(), timestamp_str.encode(), hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_sig):
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
 
 app = FastAPI(title="Media Server", version="1.0.0")
 
@@ -28,7 +89,7 @@ app = FastAPI(title="Media Server", version="1.0.0")
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # e.g. ["http://localhost:3000"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,10 +97,16 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# POST /upload  –  Frontend sends an image, gets back a URL
+# POST /upload  –  (protected by signed token)
 # ---------------------------------------------------------------------------
 @app.post("/upload")
-async def upload_image(request: Request, file: UploadFile = File(...)):
+async def upload_image(
+    request: Request,
+    file: UploadFile = File(...),
+    token: str = Query(..., description="HMAC-signed upload token from your backend"),
+):
+    verify_upload_token(token)
+
     # 1. Validate the file extension
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -65,20 +132,18 @@ async def upload_image(request: Request, file: UploadFile = File(...)):
         f.write(contents)
 
     # 5. Build the public URL for this image
-    #    request.base_url gives us e.g. "http://localhost:8000/"
     image_url = f"{request.base_url}media/{unique_name}"
 
     return {"url": image_url, "filename": unique_name}
 
 
 # ---------------------------------------------------------------------------
-# GET /media/{filename}  –  Serve a stored image by its filename
+# GET /media/{filename}  –  Serve a stored image (public)
 # ---------------------------------------------------------------------------
 @app.get("/media/{filename}")
 async def get_image(filename: str):
     file_path = MEDIA_DIR / filename
 
-    # Prevent directory traversal attacks
     if not file_path.resolve().is_relative_to(MEDIA_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid filename.")
 
@@ -89,10 +154,15 @@ async def get_image(filename: str):
 
 
 # ---------------------------------------------------------------------------
-# DELETE /media/{filename}  –  Delete a stored image
+# DELETE /media/{filename}  –  (protected by signed token)
 # ---------------------------------------------------------------------------
 @app.delete("/media/{filename}")
-async def delete_image(filename: str):
+async def delete_image(
+    filename: str,
+    token: str = Query(..., description="HMAC-signed upload token from your backend"),
+):
+    verify_upload_token(token)
+
     file_path = MEDIA_DIR / filename
 
     if not file_path.resolve().is_relative_to(MEDIA_DIR.resolve()):
@@ -106,7 +176,7 @@ async def delete_image(filename: str):
 
 
 # ---------------------------------------------------------------------------
-# GET /media  –  List all stored images (handy for debugging)
+# GET /media  –  List all stored images (public, handy for debugging)
 # ---------------------------------------------------------------------------
 @app.get("/media")
 async def list_images(request: Request):
