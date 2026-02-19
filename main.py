@@ -97,9 +97,9 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# POST /upload  –  (protected by signed token)
+# POST /media  –  (protected by signed token)
 # ---------------------------------------------------------------------------
-@app.post("/upload")
+@app.post("/media")
 async def upload_image(
     request: Request,
     file: UploadFile = File(...),
@@ -176,7 +176,7 @@ async def delete_image(
 
 
 # ---------------------------------------------------------------------------
-# GET /media  –  List all stored images (public, handy for debugging)
+# GET /  –  List all stored images (public, handy for debugging)
 # ---------------------------------------------------------------------------
 @app.get("/media")
 async def list_images(request: Request):
@@ -189,8 +189,8 @@ async def list_images(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# GET /  –  Health check
+# GET /ping  –  Health check
 # ---------------------------------------------------------------------------
-@app.get("/")
+@app.get("/ping")
 async def root():
     return {"status": "ok", "service": "Media Server"}

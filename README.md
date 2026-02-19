@@ -69,8 +69,8 @@ def upload_token_view(request):
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/` | Public | Health check |
-| `POST` | `/upload?token=<token>` | Token | Upload an image (multipart `file` field) |
+| `GET` | `/ping` | Public | Health check |
+| `POST` | `/media?token=<token>` | Token | Upload an image (multipart `file` field) |
 | `GET` | `/media/{filename}` | Public | Serve a stored image |
 | `DELETE` | `/media/{filename}?token=<token>` | Token | Delete a stored image |
 | `GET` | `/media` | Public | List all stored images |
